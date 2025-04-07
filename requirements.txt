@@ -1,8 +1,8 @@
--f https://download.pytorch.org/whl/cpu/torch_stable.html
-torch>=2.2.0
-streamlit>=1.20.0
-numpy>=1.26.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-plotly>=5.15.0
-openpyxl>=3.0.0
+streamlit==1.44.1
+torch==2.6.0
+numpy
+pandas
+plotly
+matplotlib
+openpyxl
+sqlite3

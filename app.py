@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 import os
+os.makedirs("data", exist_ok=True)  # tạo thư mục data nếu chưa tồn tại
 import base64
 from io import BytesIO
 import sqlite3
@@ -19,7 +20,9 @@ from database import DamDatabase
 
 # Khởi tạo cơ sở dữ liệu
 def get_database():
-    return DamDatabase("data/dam_results.db")
+    db = DamDatabase("data/dam_results.db")
+    db.create_tables()  # Thêm dòng này để tạo bảng nếu chưa có
+    return db
 
 # Hàm tạo báo cáo Excel
 def create_excel_report(result):
@@ -141,13 +144,13 @@ tabs = st.tabs(["Tính toán mới", "Lịch sử tính toán"])
 with tabs[0]:
     # Khởi tạo giá trị mặc định
     default_values = {
-        'H': 100.0,
+        'H': 30.0,
         'gamma_bt': 2.4,
         'gamma_n': 1.0,
         'f': 0.7,
         'C': 0.0,
-        'Kc': 1.3,
-        'a1': 0.05,
+        'Kc': 1.2,
+        'a1': 0.5,
         'max_iterations': 5000,
         'convergence_threshold': 1e-6,
         'patience': 50
@@ -194,7 +197,7 @@ with tabs[0]:
             f = st.number_input(
                 "Hệ số ma sát", 
                 min_value=0.3, 
-                max_value=0.9, 
+                max_value=2.0, 
                 value=st.session_state.f, 
                 step=0.05
             )
@@ -208,14 +211,14 @@ with tabs[0]:
             Kc = st.number_input(
                 "Hệ số ổn định yêu cầu", 
                 min_value=1.1, 
-                max_value=2.0, 
+                max_value=4.0, 
                 value=st.session_state.Kc, 
                 step=0.1
             )
             a1 = st.number_input(
                 "Hệ số áp lực thấm", 
                 min_value=0.0, 
-                max_value=0.2, 
+                max_value=1.0, 
                 value=st.session_state.a1, 
                 step=0.01
             )
@@ -256,7 +259,7 @@ with tabs[0]:
         if reset_clicked:
             for k, v in default_values.items():
                 st.session_state[k] = v
-            st.experimental_rerun()
+            st.success("Đã reset lại các giá trị!")  # Thông báo trực quan khi đặt lại
     
         # Xử lý khi form được gửi
         if submitted:
