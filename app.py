@@ -15,7 +15,7 @@ import threading
 from contextlib import contextmanager
 
 # Import các module tùy chỉnh
-from pinns_optimizer import optimize_dam_section, create_force_diagram, plot_loss_curve
+from pinns_optimizer import optimize_dam_section, create_force_diagram_matplotlib, plot_loss_curve
 from database import DamDatabase
 
 # Khởi tạo cơ sở dữ liệu
@@ -359,8 +359,13 @@ with tabs[0]:
             with result_tabs[0]:
                 # Tạo biểu đồ Plotly tương tác
                 try:
-                    fig = create_force_diagram(result)
-                    st.plotly_chart(fig, use_container_width=True)
+                    create_force_diagram_matplotlib(
+                        H=result['H'],
+                        n=result['n'],
+                        m=result['m'],
+                        xi=result['xi']
+                    )
+                    st.pyplot(fig)
                 except Exception as e:
                     st.error(f"Không thể tạo biểu đồ mặt cắt đập: {str(e)}")
                     st.exception(e)

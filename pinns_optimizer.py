@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrow
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -201,141 +202,49 @@ def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000
     }
 
 # Hàm tạo biểu đồ mặt cắt đập và sơ đồ lực
-def create_force_diagram(result):
-    """
-    Tạo biểu đồ mặt cắt đập và sơ đồ lực
-    
-    Parameters:
-    -----------
-    result : dict
-        Kết quả tính toán từ hàm optimize_dam_section
-        
-    Returns:
-    --------
-    fig : plotly.graph_objects.Figure
-        Biểu đồ Plotly tương tác
-    """
-    import plotly.graph_objects as go
-
-    H = result['H']
-    n = result['n']
-    m = result['m']
-    xi = result['xi']
-
+def create_force_diagram_matplotlib(H, n, m, xi, save_path=None):
     B = H * (m + n * (1 - xi))
+    lG1 = H * (m / 6 - n * (1 - xi) / 2)
+    lG2 = H * (m / 2 - n * (1 - xi) / 6)
+    lt  = H * (m + n * (1 - xi)) / 6
+    l2  = H * m / 2
+    l22 = H * m / 2 + H * n * (1 - xi) / 6
+    l1  = H / 3
+    mid = B / 2
+
     x0 = 0
     x1 = n * H * (1 - xi)
-    x4 = x1 + m * H
+    x3 = x1
+    x4 = x3 + m * H
+    y0 = 0
+    y3 = H
 
+    fig, ax = plt.subplots(figsize=(8, 10))
     x = [x0, x1, x1, x1, x4, x0]
-    y = [0, H * (1 - xi), H, H, 0, 0]
+    y = [y0, H * (1 - xi), H, H, y0, y0]
+    ax.plot(x, y, 'k-', lw=1.5)
+    ax.fill(x, y, color='lightgrey', alpha=0.5)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y, mode='lines', fill='toself',
-        fillcolor='rgba(211,211,211,0.5)',  # lightgrey với alpha=0.5
-        line=dict(color='black', width=1.5),
-        name='Mặt cắt đập'
-    ))
+    def draw_arrow(x, y, dx, dy, label):
+        ax.add_patch(FancyArrow(x, y, dx, dy, width=0.3, head_width=1.2, head_length=1.5, color='red'))
+        ax.text(x + dx * 2.0, y + dy * 2.0, label, fontsize=25, color='black', ha='center', va='center')
 
-    # Tính vị trí đặt lực
-    mid = B / 2
-    lG1 = result['lG1']
-    lG2 = result['lG2']
-    lt = result['lt']
-    l2 = result['l2']
-    l22 = result['l22']
-    l1 = result['l1']
-    
-    # Độ dài mũi tên
-    arrow_len = H / 15
+    draw_arrow(mid - lG1, H / 3, 0, -4, 'G1')
+    draw_arrow(mid - lG2, H * (1 - xi) / 3, 0, -3.5, 'G2')
+    draw_arrow(mid - lt, 0, 0, 3.5, 'Wt')
+    draw_arrow(mid - l2, H * (1 - xi) + xi * H / 2, 0, -2.8, "W'2")
+    draw_arrow(mid - l22, 2/3 * H * (1 - xi), 0, -2.8, 'W\"2')
+    draw_arrow(x0 - 3, l1, 2.5, 0, 'W1')
 
-    # G1 – trọng lượng phần dốc (⬇️)
-    fig.add_annotation(
-        x=mid - lG1, y=H / 3,
-        ax=mid - lG1, ay=H / 3 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='G1',
-        font=dict(size=12, color='black')
-    )
-
-    # G2 – trọng lượng phần đứng (⬇️)
-    fig.add_annotation(
-        x=mid - lG2, y=H * (1 - xi) / 3,
-        ax=mid - lG2, ay=H * (1 - xi) / 3 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='G2',
-        font=dict(size=12, color='black')
-    )
-
-    # Wt – áp lực thấm (⬆️)
-    fig.add_annotation(
-        x=mid - lt, y=0,
-        ax=mid - lt, ay=arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='Wt',
-        font=dict(size=12, color='black')
-    )
-
-    # W'2 – phần hình chữ nhật (⬇️)
-    fig.add_annotation(
-        x=mid - l2, y=H * (1 - xi) + xi * H / 2,
-        ax=mid - l2, ay=H * (1 - xi) + xi * H / 2 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text="W'2",
-        font=dict(size=12, color='black')
-    )
-
-    # W"2 – phần tam giác (⬇️)
-    fig.add_annotation(
-        x=mid - l22, y=(2 / 3) * H * (1 - xi),
-        ax=mid - l22, ay=(2 / 3) * H * (1 - xi) - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='W"2',
-        font=dict(size=12, color='black')
-    )
-
-    # W1 – áp lực tam giác từ thượng lưu (➡️)
-    fig.add_annotation(
-        x=x0 - arrow_len, y=l1,
-        ax=x0, ay=l1,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='W1',
-        font=dict(size=12, color='black')
-    )
-
-    # Cấu hình chung
-    fig.update_layout(
-        title=f'Sơ đồ lực tác dụng lên đập H = {H:.0f} m',
-        xaxis_title='Chiều rộng (m)',
-        yaxis_title='Chiều cao (m)',
-        width=850,
-        height=600,
-        plot_bgcolor='white',
-        showlegend=False
-    )
-    
-    # Đặt tỷ lệ trục x và y bằng nhau
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
-    
-    # Đặt giới hạn trục để có không gian cho mũi tên
-    fig.update_xaxes(range=[-arrow_len*3, B + arrow_len*3])
-    fig.update_yaxes(range=[0, H + arrow_len*3])
-    
-    # Thêm lưới
-    fig.update_layout(
-        xaxis=dict(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='lightgray',
-        ),
-        yaxis=dict(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='lightgray',
-        )
-    )
-
+    ax.set_title(f\"Sơ đồ lực tác dụng lên đập H = {H} m")
+    ax.set_xlabel(\"Chiều rộng (m)")
+    ax.set_ylabel(\"Chiều cao (m)")
+    ax.axis(\"equal")
+    ax.set_xlim(-5, B + 5)
+    ax.set_ylim(0, H + 5)
+    ax.grid(True)
+    if save_path:
+        plt.savefig(save_path)
     return fig
 
 # Hàm tạo biểu đồ hàm mất mát
