@@ -187,6 +187,144 @@ def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
+# Hàm tạo biểu đồ mặt cắt đập và sơ đồ lực
+def create_force_diagram(result):
+    """
+    Tạo biểu đồ mặt cắt đập và sơ đồ lực
+    
+    Parameters:
+    -----------
+    result : dict
+        Kết quả tính toán từ hàm optimize_dam_section
+        
+    Returns:
+    --------
+    fig : plotly.graph_objects.Figure
+        Biểu đồ Plotly tương tác
+    """
+    import plotly.graph_objects as go
+
+    H = result['H']
+    n = result['n']
+    m = result['m']
+    xi = result['xi']
+
+    B = H * (m + n * (1 - xi))
+    x0 = 0
+    x1 = n * H * (1 - xi)
+    x4 = x1 + m * H
+
+    x = [x0, x1, x1, x1, x4, x0]
+    y = [0, H * (1 - xi), H, H, 0, 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=y, mode='lines', fill='toself',
+        fillcolor='rgba(211,211,211,0.5)',  # lightgrey với alpha=0.5
+        line=dict(color='black', width=1.5),
+        name='Mặt cắt đập'
+    ))
+
+    # Tính vị trí đặt lực
+    mid = B / 2
+    lG1 = result['lG1']
+    lG2 = result['lG2']
+    lt = result['lt']
+    l2 = result['l2']
+    l22 = result['l22']
+    l1 = result['l1']
+    
+    # Độ dài mũi tên
+    arrow_len = H / 15
+
+    # G1 – trọng lượng phần dốc (⬇️)
+    fig.add_annotation(
+        x=mid - lG1, y=H / 3,
+        ax=mid - lG1, ay=H / 3 - arrow_len,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text='G1',
+        font=dict(size=12, color='black')
+    )
+
+    # G2 – trọng lượng phần đứng (⬇️)
+    fig.add_annotation(
+        x=mid - lG2, y=H * (1 - xi) / 3,
+        ax=mid - lG2, ay=H * (1 - xi) / 3 - arrow_len,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text='G2',
+        font=dict(size=12, color='black')
+    )
+
+    # Wt – áp lực thấm (⬆️)
+    fig.add_annotation(
+        x=mid - lt, y=0,
+        ax=mid - lt, ay=arrow_len,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text='Wt',
+        font=dict(size=12, color='black')
+    )
+
+    # W'2 – phần hình chữ nhật (⬇️)
+    fig.add_annotation(
+        x=mid - l2, y=H * (1 - xi) + xi * H / 2,
+        ax=mid - l2, ay=H * (1 - xi) + xi * H / 2 - arrow_len,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text="W'2",
+        font=dict(size=12, color='black')
+    )
+
+    # W"2 – phần tam giác (⬇️)
+    fig.add_annotation(
+        x=mid - l22, y=(2 / 3) * H * (1 - xi),
+        ax=mid - l22, ay=(2 / 3) * H * (1 - xi) - arrow_len,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text='W"2',
+        font=dict(size=12, color='black')
+    )
+
+    # W1 – áp lực tam giác từ thượng lưu (➡️)
+    fig.add_annotation(
+        x=x0 - arrow_len, y=l1,
+        ax=x0, ay=l1,
+        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
+        arrowcolor='red', text='W1',
+        font=dict(size=12, color='black')
+    )
+
+    # Cấu hình chung
+    fig.update_layout(
+        title=f'Sơ đồ lực tác dụng lên đập H = {H:.0f} m',
+        xaxis_title='Chiều rộng (m)',
+        yaxis_title='Chiều cao (m)',
+        width=850,
+        height=600,
+        plot_bgcolor='white',
+        showlegend=False
+    )
+    
+    # Đặt tỷ lệ trục x và y bằng nhau
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    
+    # Đặt giới hạn trục để có không gian cho mũi tên
+    fig.update_xaxes(range=[-arrow_len*3, B + arrow_len*3])
+    fig.update_yaxes(range=[0, H + arrow_len*3])
+    
+    # Thêm lưới
+    fig.update_layout(
+        xaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='lightgray',
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='lightgray',
+        )
+    )
+
+    return fig
+
 # Hàm tạo biểu đồ hàm mất mát
 def plot_loss_curve(loss_history):
     """
