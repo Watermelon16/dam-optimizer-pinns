@@ -5,4 +5,3 @@ pandas
 plotly
 matplotlib
 openpyxl
-sqlite3
