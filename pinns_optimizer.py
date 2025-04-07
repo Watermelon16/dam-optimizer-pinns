@@ -37,6 +37,21 @@ class OptimalParamsNet(nn.Module):
 
 # Hàm tính vật lý dùng PINNs
 def compute_physics(n, xi, m, H, gamma_bt, gamma_n, f, C, a1):
+    # Chuyển đổi các tham số đầu vào thành tensors nếu chúng là scalars
+    # Điều này đảm bảo tất cả các phép tính đều trả về tensors
+    if not isinstance(H, torch.Tensor):
+        H = torch.tensor(H, dtype=torch.float32, device=device)
+    if not isinstance(gamma_bt, torch.Tensor):
+        gamma_bt = torch.tensor(gamma_bt, dtype=torch.float32, device=device)
+    if not isinstance(gamma_n, torch.Tensor):
+        gamma_n = torch.tensor(gamma_n, dtype=torch.float32, device=device)
+    if not isinstance(f, torch.Tensor):
+        f = torch.tensor(f, dtype=torch.float32, device=device)
+    if not isinstance(C, torch.Tensor):
+        C = torch.tensor(C, dtype=torch.float32, device=device)
+    if not isinstance(a1, torch.Tensor):
+        a1 = torch.tensor(a1, dtype=torch.float32, device=device)
+    
     B = H * (m + n * (1 - xi))
     G1 = 0.5 * gamma_bt * m * H**2
     G2 = 0.5 * gamma_bt * n * H**2 * (1 - xi)**2
@@ -147,6 +162,12 @@ def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000
     # Số vòng lặp thực tế đã thực hiện
     actual_iterations = epoch + 1
 
+    # Hàm trợ giúp để xử lý cả tensor và float
+    def get_value(x):
+        if isinstance(x, torch.Tensor):
+            return x.item()
+        return float(x)
+
     return {
         'H': H,
         'gamma_bt': gamma_bt,
@@ -155,32 +176,32 @@ def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000
         'C': C,
         'Kc': Kc,
         'a1': a1,
-        'n': n.item(),
-        'm': m.item(),
-        'xi': xi.item(),
-        'A': A.item(),
-        'K': K.item(),
-        'sigma': sigma.item(),
-        'G': G.item(),
-        'G1': G1.item(),
-        'G2': G2.item(),
-        'W1': W1.item(),
-        'W2': W2.item(),
-        'W2_1': W2_1.item(),
-        'W2_2': W2_2.item(),
-        'Wt': Wt.item(),
-        'Fct': Fct.item(),
-        'Fgt': Fgt.item(),
-        'B': B.item(),
-        'e': e.item(),
-        'M0': M0.item(),
-        'P': P.item(),
-        'lG1': lG1.item(),
-        'lG2': lG2.item(),
-        'lt': lt.item(),
-        'l2': l2.item(),
-        'l22': l22.item(),
-        'l1': l1.item(),
+        'n': get_value(n),
+        'm': get_value(m),
+        'xi': get_value(xi),
+        'A': get_value(A),
+        'K': get_value(K),
+        'sigma': get_value(sigma),
+        'G': get_value(G),
+        'G1': get_value(G1),
+        'G2': get_value(G2),
+        'W1': get_value(W1),
+        'W2': get_value(W2),
+        'W2_1': get_value(W2_1),
+        'W2_2': get_value(W2_2),
+        'Wt': get_value(Wt),
+        'Fct': get_value(Fct),
+        'Fgt': get_value(Fgt),
+        'B': get_value(B),
+        'e': get_value(e),
+        'M0': get_value(M0),
+        'P': get_value(P),
+        'lG1': get_value(lG1),
+        'lG2': get_value(lG2),
+        'lt': get_value(lt),
+        'l2': get_value(l2),
+        'l22': get_value(l22),
+        'l1': get_value(l1),
         'iterations': actual_iterations,  # Số vòng lặp thực tế
         'max_iterations': max_iterations, # Số vòng lặp tối đa
         'loss_history': loss_history,

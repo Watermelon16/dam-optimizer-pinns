@@ -6,14 +6,17 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 
 ## Lỗi đã được khắc phục
 
-1. **Lỗi import module**:
-   - Đã thêm hàm `create_force_diagram` vào file `pinns_optimizer.py`
-   - Đảm bảo tất cả các hàm được import trong `app.py` đều tồn tại trong các module tương ứng
+1. **Lỗi AttributeError với biến float**:
+   - Đã sửa lỗi `'float' object has no attribute 'item'` bằng cách thêm hàm `get_value()` để xử lý cả tensor và float
+   - Đảm bảo tất cả các tham số đầu vào được chuyển đổi thành tensors
 
-2. **Cải tiến khác**:
+2. **Lỗi hiển thị đồ họa**:
+   - Cải thiện xử lý lỗi với các khối try-except chi tiết
+   - Hiển thị thông báo lỗi cụ thể khi không thể tạo biểu đồ
+
+3. **Cải tiến khác**:
    - Tối ưu hóa PINNs với hàm mất mát tốt hơn và cơ chế hội tụ sớm
    - Sửa lỗi cơ sở dữ liệu với kết nối SQLite an toàn cho thread
-   - Cải thiện hiển thị đồ họa với biểu đồ hàm mất mát
    - Tương thích với Streamlit Cloud thông qua cập nhật yêu cầu PyTorch
 
 ## Yêu cầu
@@ -38,7 +41,7 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 
 1. Tải xuống các file đã cải tiến:
    - `app.py`
-   - `pinns_optimizer.py` (đã cập nhật với hàm `create_force_diagram`)
+   - `pinns_optimizer.py` (đã cập nhật với hàm `get_value()`)
    - `database.py`
    - `requirements.txt`
 
@@ -74,8 +77,8 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 
 ```
 dam-optimizer-pinns/
-├── app.py                  # Ứng dụng Streamlit chính
-├── pinns_optimizer.py      # Mô-đun tối ưu hóa PINNs (đã thêm hàm create_force_diagram)
+├── app.py                  # Ứng dụng Streamlit chính (đã cải thiện xử lý lỗi)
+├── pinns_optimizer.py      # Mô-đun tối ưu hóa PINNs (đã sửa lỗi AttributeError)
 ├── database.py             # Mô-đun cơ sở dữ liệu thread-safe
 ├── requirements.txt        # Các thư viện cần thiết
 └── data/                   # Thư mục lưu trữ cơ sở dữ liệu
@@ -87,11 +90,7 @@ dam-optimizer-pinns/
    - Tất cả các file phải nằm ở thư mục gốc của repository
    - Thư mục `data` phải tồn tại để lưu trữ cơ sở dữ liệu
 
-2. **Kiểm tra imports**:
-   - Đảm bảo tất cả các hàm được import trong `app.py` đều tồn tại trong các module tương ứng
-   - Không thay đổi tên các hàm đã được import
-
-3. **Xử lý lỗi**:
+2. **Xử lý lỗi**:
    - Nếu gặp lỗi khi triển khai, kiểm tra logs bằng cách nhấp vào "Manage app" và xem phần "Logs"
    - Đảm bảo rằng bạn đã đẩy tất cả các file lên GitHub, bao gồm `app.py`, `pinns_optimizer.py`, `database.py` và `requirements.txt`
 
@@ -99,10 +98,10 @@ dam-optimizer-pinns/
 
 Ứng dụng đã được cải tiến để khắc phục các lỗi và tối ưu hóa hiệu suất. Các cải tiến chính bao gồm:
 
-1. Sửa lỗi import module bằng cách thêm hàm `create_force_diagram` vào `pinns_optimizer.py`
-2. Tối ưu hóa PINNs với hàm mất mát tốt hơn và cơ chế hội tụ sớm
-3. Sửa lỗi cơ sở dữ liệu với kết nối SQLite an toàn cho thread
-4. Cải thiện hiển thị đồ họa với biểu đồ hàm mất mát
+1. Sửa lỗi AttributeError bằng cách thêm hàm `get_value()` để xử lý cả tensor và float
+2. Cải thiện xử lý lỗi với các khối try-except chi tiết
+3. Tối ưu hóa PINNs với hàm mất mát tốt hơn và cơ chế hội tụ sớm
+4. Sửa lỗi cơ sở dữ liệu với kết nối SQLite an toàn cho thread
 5. Tương thích với Streamlit Cloud thông qua cập nhật yêu cầu PyTorch
 
 Ứng dụng giờ đây có thể tính toán mặt cắt kinh tế đập bê tông thỏa mãn chính xác 3 điều kiện: K=Kc, σ≈0, và tối thiểu hóa A.
