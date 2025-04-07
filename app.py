@@ -360,7 +360,7 @@ with tabs[0]:
             with result_tabs[0]:
                 # Tạo biểu đồ Plotly tương tác
                 try:
-                    create_force_diagram_matplotlib(
+                    fig = create_force_diagram_matplotlib(
                         H=result['H'],
                         n=result['n'],
                         m=result['m'],
