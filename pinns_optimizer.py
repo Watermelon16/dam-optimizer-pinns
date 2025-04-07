@@ -78,22 +78,14 @@ def compute_physics(n, xi, m, H, gamma_bt, gamma_n, f, C, a1):
 
 # Hàm mất mát cải tiến
 def loss_function(sigma, K, A, Kc, alpha):
-    # Điều kiện ổn định trượt: K=Kc (không phải K>=Kc)
-    # Sử dụng MSE để K tiến gần đến Kc thay vì chỉ đảm bảo K>=Kc
-    penalty_K = (K - Kc)**2
+    k_factor = 1.0  # Có thể điều chỉnh lên 1.05 nếu cần dư ổn định
+    K_min = Kc * k_factor
+    BIG_PENALTY = 1e5
     
-    # Điều kiện ứng suất mép thượng lưu: σ≈0 (không có ứng suất kéo)
-    # Phạt nặng nếu sigma > 0, nhưng cũng khuyến khích sigma tiến gần đến 0
-    penalty_sigma = torch.where(sigma > 0, 
-                               100 * sigma**2,  # Phạt nặng nếu có ứng suất kéo
-                               (sigma - 0)**2)  # Khuyến khích sigma tiến gần đến 0
-    
-    # Tối thiểu hóa diện tích mặt cắt A
-    # Đây là hàm mục tiêu chính cần tối ưu
+    penalty_K = BIG_PENALTY * torch.clamp(K_min - K, min=0)**2
+    penalty_sigma = sigma**2
     objective = alpha * A
-    
-    # Tổng hợp các thành phần
-    return penalty_K.mean() + penalty_sigma.mean() + objective.mean()
+    return penalty_K.mean() + 100 * penalty_sigma.mean() + objective.mean()
 
 # Hàm tối ưu hóa cải tiến với cơ chế hội tụ sớm
 def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000, convergence_threshold=1e-6, patience=50):
