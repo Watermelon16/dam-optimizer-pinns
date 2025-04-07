@@ -9,6 +9,10 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 - Tài khoản GitHub (có thể đăng nhập bằng passkey)
 - Mã nguồn ứng dụng (đã được cung cấp)
 
+## Lưu ý quan trọng về tương thích
+
+Streamlit Cloud hiện tại sử dụng Python 3.12.9, chỉ tương thích với PyTorch từ phiên bản 2.2.0 trở lên. File requirements.txt đã được cập nhật để phản ánh yêu cầu này.
+
 ## Các bước triển khai
 
 ### 1. Tạo repository trên GitHub
@@ -24,7 +28,7 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 
 ### 2. Tải mã nguồn lên GitHub
 
-1. Giải nén file chứa mã nguồn mà tôi đã gửi cho bạn
+1. Giải nén file chứa mã nguồn đã cập nhật
 2. Mở terminal/command prompt và di chuyển đến thư mục đã giải nén:
    ```bash
    cd đường_dẫn_đến_thư_mục/dam_optimizer_pinns
@@ -67,11 +71,17 @@ Tài liệu này hướng dẫn cách triển khai ứng dụng tính toán tố
 ### Nếu gặp lỗi khi triển khai
 
 1. Kiểm tra logs lỗi bằng cách nhấp vào "Manage app" và xem phần "Logs"
-2. Đảm bảo rằng bạn đã đẩy tất cả các file lên GitHub, bao gồm `app.py`, `database.py` và `requirements.txt`
-3. Nếu gặp lỗi liên quan đến PyTorch, hãy kiểm tra file `requirements.txt` để đảm bảo nó bao gồm dòng:
+2. Đảm bảo rằng bạn đã đẩy tất cả các file lên GitHub, bao gồm `app.py`, `database.py` và `requirements.txt` đã cập nhật
+3. Đảm bảo file `requirements.txt` đã được cập nhật với nội dung:
    ```
    -f https://download.pytorch.org/whl/cpu/torch_stable.html
-   torch==1.13.1
+   torch>=2.2.0
+   streamlit>=1.20.0
+   numpy>=1.26.0
+   pandas>=2.0.0
+   matplotlib>=3.7.0
+   plotly>=5.15.0
+   openpyxl>=3.0.0
    ```
 4. Nếu vẫn gặp vấn đề, hãy thử các bước sau:
    - Kiểm tra xem repository của bạn có công khai (public) không

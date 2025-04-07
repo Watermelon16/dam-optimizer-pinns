@@ -1,5 +1,5 @@
 -f https://download.pytorch.org/whl/cpu/torch_stable.html
-torch==1.13.1
+torch>=2.2.0
 streamlit>=1.20.0
 numpy>=1.26.0
 pandas>=2.0.0
