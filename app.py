@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrow
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
