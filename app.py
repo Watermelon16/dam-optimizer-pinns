@@ -244,7 +244,7 @@ with tabs[0]:
                     step=10,
                     help="Số vòng lặp chờ đợi khi không có cải thiện trước khi dừng sớm"
                 )
-            else:
+            
                 convergence_threshold = st.session_state.convergence_threshold
                 patience = st.session_state.patience
             
