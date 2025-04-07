@@ -10,269 +10,21 @@ import os
 import base64
 from io import BytesIO
 import sqlite3
+import threading
+from contextlib import contextmanager
+
+# Import các module tùy chỉnh
+from pinns_optimizer import optimize_dam_section, create_force_diagram, plot_loss_curve
 from database import DamDatabase
 
-# Thêm class mạng PINNs
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-class OptimalParamsNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(1, 64), nn.Tanh(),
-            nn.Linear(64, 64), nn.Tanh(),
-            nn.Linear(64, 3), nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        out = self.net(x)
-        # Giới hạn đầu ra chính xác như trong file gốc
-        n = out[:, 0] * 0.4             # n ∈ [0, 0.4]
-        m = out[:, 1] * 3.5 + 0.5       # m ∈ [0.5, 4.0]
-        xi = out[:, 2] * 0.99 + 0.01    # xi ∈ (0.01, 1]
-        return n, m, xi
-
-# Hàm tính vật lý dùng PINNs - chính xác như trong file gốc
-def compute_physics(n, xi, m, H, gamma_bt, gamma_n, f, C, a1):
-    B = H * (m + n * (1 - xi))
-    G1 = 0.5 * gamma_bt * m * H**2
-    G2 = 0.5 * gamma_bt * n * H**2 * (1 - xi)**2
-    G = G1 + G2
-    W1 = 0.5 * gamma_n * H**2
-    W2_1 = gamma_n * n * (1 - xi) * xi * H**2
-    W2_2 = 0.5 * gamma_n * n * H**2 * (1 - xi)**2
-    W2 = W2_1 + W2_2
-    Wt = 0.5 * gamma_n * a1 * H * (m * H + n * H * (1 - xi))
-    P = G + W2 - Wt
-    lG1 = H * (m / 6 - n * (1 - xi) / 2)
-    lG2 = H * (m / 2 - n * (1 - xi) / 6)
-    lt  = H * (m + n * (1 - xi)) / 6
-    l2  = H * m / 2
-    l22 = H * m / 2 + H * n * (1 - xi) / 6
-    l1  = H / 3
-    M0 = -G1 * lG1 - G2 * lG2 + Wt * lt - W2_1 * l2 - W2_2 * l22 + W1 * l1
-    sigma = P / B - 6 * M0 / B**2
-    Fct = f * (G + W2 - Wt) + C * H * (m + n * (1 - xi))
-    Fgt = 0.5 * gamma_n * H**2
-    K = Fct / Fgt
-    A = 0.5 * H**2 * (m + n * (1 - xi)**2)
-    return sigma, K, A, G, W1, W2, Wt, Fct, Fgt, B, M0, G1, G2, W2_1, W2_2, lG1, lG2, lt, l2, l22, l1, P
-
-# Hàm mất mát - chính xác như trong file gốc
-def loss_function(sigma, K, A, Kc, alpha):
-    # Hệ số k_factor mặc định là 1.0
-    k_factor = 1.0
-    # K_min = Kc*factor
-    K_min = Kc * k_factor
-
-    # Tăng penalty rất lớn nếu K < K_min
-    BIG_PENALTY = 1e5
-    penalty_K = torch.clamp(K_min - K, min=0)**2
-    penalty_K = BIG_PENALTY * penalty_K
-
-    # Ở đây vẫn phạt sigma**2, có thể tùy biến
-    penalty_sigma = sigma**2
-
-    # Ghép lại
-    return penalty_K.mean() + 100 * penalty_sigma.mean() + alpha * A.mean()
-
-# Thay đổi hàm optimize_dam_section để sử dụng PINNs
-def optimize_dam_section(H, gamma_bt, gamma_n, f, C, Kc, a1, max_iterations=5000):
-    alpha = 0.01  # hệ số phạt diện tích - giống file gốc
-    model = OptimalParamsNet().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-
-    data = torch.ones((1, 1), device=device)
-    
-    # Lưu lịch sử tối ưu hóa
-    loss_history = []
-
-    for epoch in range(max_iterations):
-        optimizer.zero_grad()
-        n, m, xi = model(data)
-        sigma, K, A = compute_physics(n, xi, m, H, gamma_bt, gamma_n, f, C, a1)[:3]
-        loss = loss_function(sigma, K, A, Kc, alpha)
-        loss.backward()
-        optimizer.step()
-        
-        # Lưu lịch sử loss
-        loss_history.append(loss.item())
-
-        if epoch % 500 == 0:
-            print(f"Epoch {epoch}: Loss = {loss.item():.6f}")
-
-    model.eval()
-    n, m, xi = model(data)
-    sigma, K, A, G, W1, W2, Wt, Fct, Fgt, B, M0, G1, G2, W2_1, W2_2, lG1, lG2, lt, l2, l22, l1, P = compute_physics(n, xi, m, H, gamma_bt, gamma_n, f, C, a1)
-    
-    # Tính độ lệch tâm
-    e = B/2 - M0/P
-
-    return {
-        'H': H,
-        'gamma_bt': gamma_bt,
-        'gamma_n': gamma_n,
-        'f': f,
-        'C': C,
-        'Kc': Kc,
-        'a1': a1,
-        'n': n.item(),
-        'm': m.item(),
-        'xi': xi.item(),
-        'A': A.item(),
-        'K': K.item(),
-        'sigma': sigma.item(),
-        'G': G.item(),
-        'G1': G1.item(),
-        'G2': G2.item(),
-        'W1': W1.item(),
-        'W2': W2.item(),
-        'W2_1': W2_1.item(),
-        'W2_2': W2_2.item(),
-        'Wt': Wt.item(),
-        'Fct': Fct.item(),
-        'Fgt': Fgt.item(),
-        'B': B.item(),
-        'e': e.item(),
-        'M0': M0.item(),
-        'P': P.item(),
-        'lG1': lG1.item(),
-        'lG2': lG2.item(),
-        'lt': lt.item(),
-        'l2': l2.item(),
-        'l22': l22.item(),
-        'l1': l1.item(),
-        'iterations': max_iterations,
-        'loss_history': loss_history,
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-
-
-# Hàm tạo biểu đồ mặt cắt đập và sơ đồ lực - cập nhật theo file gốc
-def create_force_diagram(result):
-    import plotly.graph_objects as go
-
-    H = result['H']
-    n = result['n']
-    m = result['m']
-    xi = result['xi']
-
-    B = H * (m + n * (1 - xi))
-    x0 = 0
-    x1 = n * H * (1 - xi)
-    x4 = x1 + m * H
-
-    x = [x0, x1, x1, x1, x4, x0]
-    y = [0, H * (1 - xi), H, H, 0, 0]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y, mode='lines', fill='toself',
-        fillcolor='rgba(211,211,211,0.5)',  # lightgrey với alpha=0.5
-        line=dict(color='black', width=1.5),
-        name='Mặt cắt đập'
-    ))
-
-    # Tính vị trí đặt lực - chính xác như trong file gốc
-    mid = B / 2
-    lG1 = result['lG1']
-    lG2 = result['lG2']
-    lt = result['lt']
-    l2 = result['l2']
-    l22 = result['l22']
-    l1 = result['l1']
-    
-    # Độ dài mũi tên
-    arrow_len = H / 15
-
-    # G1 – trọng lượng phần dốc (⬇️)
-    fig.add_annotation(
-        x=mid - lG1, y=H / 3,
-        ax=mid - lG1, ay=H / 3 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='G1',
-        font=dict(size=12, color='black')
-    )
-
-    # G2 – trọng lượng phần đứng (⬇️)
-    fig.add_annotation(
-        x=mid - lG2, y=H * (1 - xi) / 3,
-        ax=mid - lG2, ay=H * (1 - xi) / 3 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='G2',
-        font=dict(size=12, color='black')
-    )
-
-    # Wt – áp lực thấm (⬆️)
-    fig.add_annotation(
-        x=mid - lt, y=0,
-        ax=mid - lt, ay=arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='Wt',
-        font=dict(size=12, color='black')
-    )
-
-    # W'2 – phần hình chữ nhật (⬇️)
-    fig.add_annotation(
-        x=mid - l2, y=H * (1 - xi) + xi * H / 2,
-        ax=mid - l2, ay=H * (1 - xi) + xi * H / 2 - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text="W'2",
-        font=dict(size=12, color='black')
-    )
-
-    # W"2 – phần tam giác (⬇️)
-    fig.add_annotation(
-        x=mid - l22, y=(2 / 3) * H * (1 - xi),
-        ax=mid - l22, ay=(2 / 3) * H * (1 - xi) - arrow_len,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='W"2',
-        font=dict(size=12, color='black')
-    )
-
-    # W1 – áp lực tam giác từ thượng lưu (➡️)
-    fig.add_annotation(
-        x=x0 - arrow_len, y=l1,
-        ax=x0, ay=l1,
-        showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=2,
-        arrowcolor='red', text='W1',
-        font=dict(size=12, color='black')
-    )
-
-    # Cấu hình chung
-    fig.update_layout(
-        title=f'Sơ đồ lực tác dụng lên đập H = {H:.0f} m',
-        xaxis_title='Chiều rộng (m)',
-        yaxis_title='Chiều cao (m)',
-        width=850,
-        height=600,
-        plot_bgcolor='white',
-        showlegend=False
-    )
-    
-    # Đặt tỷ lệ trục x và y bằng nhau
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
-    
-    # Đặt giới hạn trục để có không gian cho mũi tên
-    fig.update_xaxes(range=[-arrow_len*3, B + arrow_len*3])
-    fig.update_yaxes(range=[0, H + arrow_len*3])
-    
-    # Thêm lưới
-    fig.update_layout(
-        xaxis=dict(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='lightgray',
-        ),
-        yaxis=dict(
-            showgrid=True,
-            gridwidth=1,
-            gridcolor='lightgray',
-        )
-    )
-
-    return fig
-
+# Khởi tạo cơ sở dữ liệu
+@st.cache_resource(ttl=3600)
+def get_database():
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'dam_results.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db = DamDatabase(db_path)
+    db.create_tables()
+    return db
 
 # Hàm tạo báo cáo Excel
 def create_excel_report(result):
@@ -317,7 +69,8 @@ def create_excel_report(result):
             'Lực chống trượt (Fct)',
             'Lực gây trượt (Fgt)',
             'Độ lệch tâm (e)',
-            'Số vòng lặp',
+            'Số vòng lặp thực tế',
+            'Số vòng lặp tối đa',
             'Thời gian tính toán'
         ],
         'Giá trị': [
@@ -347,7 +100,8 @@ def create_excel_report(result):
             f"{result['Fgt']:.2f} T",
             f"{result['e']:.2f} m",
             f"{result['iterations']}",
-            f"{result['timestamp']}"
+            f"{result.get('max_iterations', 5000)}",
+            f"{result.get('computation_time', 0):.2f} giây"
         ]
     }
     
@@ -379,13 +133,6 @@ def get_excel_download_link(df, filename="bao_cao.xlsx"):
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">Tải xuống báo cáo Excel</a>'
     return href
 
-# Khởi tạo cơ sở dữ liệu
-@st.cache_resource
-def get_database():
-    db_path = os.path.join(os.path.dirname(__file__), 'data', 'dam_results.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    return DamDatabase(db_path)
-
 # Thiết lập ứng dụng Streamlit
 st.set_page_config(
     page_title="Tính toán tối ưu mặt cắt đập bê tông",
@@ -404,6 +151,8 @@ default_values = {
     'Kc': 1.2,
     'a1': 0.6,
     'max_iterations': 5000,
+    'convergence_threshold': 1e-6,
+    'patience': 50,
     'result': None,
     'show_history': False
 }
@@ -542,8 +291,30 @@ with tabs[0]:
             Kc = st.number_input("Hệ số ổn định yêu cầu Kc", min_value=1.0, max_value=2.0, value=st.session_state.Kc, step=0.1)
             a1 = st.number_input("Hệ số áp lực thấm α1", min_value=0.0, max_value=1.0, value=st.session_state.a1, step=0.1)
             
-            st.markdown("#### Thông số tính toán")
+            st.markdown("#### Thông số tính toán PINNs")
             max_iterations = st.slider("Số vòng lặp tối đa", min_value=1000, max_value=10000, value=st.session_state.max_iterations, step=1000)
+            
+            # Thông số hội tụ nâng cao (có thể ẩn đi)
+            show_advanced = st.checkbox("Hiển thị thông số nâng cao")
+            if show_advanced:
+                convergence_threshold = st.number_input(
+                    "Ngưỡng hội tụ", 
+                    min_value=1e-8, 
+                    max_value=1e-4, 
+                    value=st.session_state.convergence_threshold, 
+                    format="%.1e"
+                )
+                patience = st.slider(
+                    "Số vòng lặp kiên nhẫn", 
+                    min_value=10, 
+                    max_value=200, 
+                    value=st.session_state.patience, 
+                    step=10,
+                    help="Số vòng lặp chờ đợi khi không có cải thiện trước khi dừng sớm"
+                )
+            else:
+                convergence_threshold = st.session_state.convergence_threshold
+                patience = st.session_state.patience
             
             # Nút tính toán
             submitted = st.form_submit_button("Tính toán tối ưu")
@@ -566,6 +337,8 @@ with tabs[0]:
             st.session_state.Kc = Kc
             st.session_state.a1 = a1
             st.session_state.max_iterations = max_iterations
+            st.session_state.convergence_threshold = convergence_threshold
+            st.session_state.patience = patience
             
             with st.spinner("Đang tính toán tối ưu mặt cắt đập..."):
                 # Ghi lại thời gian bắt đầu
@@ -580,7 +353,9 @@ with tabs[0]:
                     C=C,
                     Kc=Kc,
                     a1=a1,
-                    max_iterations=max_iterations
+                    max_iterations=max_iterations,
+                    convergence_threshold=convergence_threshold,
+                    patience=patience
                 )
                 
                 # Tính thời gian tính toán
@@ -590,11 +365,14 @@ with tabs[0]:
                 # Lưu kết quả vào session state
                 st.session_state['result'] = result
                 
-                # Lưu kết quả vào cơ sở dữ liệu
-                db = get_database()
-                result_id = db.save_result(result)
-                st.session_state['last_result_id'] = result_id
-                st.success(f"Đã lưu kết quả tính toán vào cơ sở dữ liệu (ID: {result_id})")
+                try:
+                    # Lưu kết quả vào cơ sở dữ liệu
+                    db = get_database()
+                    result_id = db.save_result(result)
+                    st.session_state['last_result_id'] = result_id
+                    st.success(f"Đã lưu kết quả tính toán vào cơ sở dữ liệu (ID: {result_id})")
+                except Exception as e:
+                    st.warning(f"Không thể lưu kết quả vào cơ sở dữ liệu: {str(e)}")
     
     # Hiển thị kết quả nếu có
     with col2:
@@ -617,8 +395,10 @@ with tabs[0]:
                 st.metric("Ứng suất mép thượng lưu (σ)", f"{result['sigma']:.4f} T/m²")
             
             # Hiển thị trạng thái
-            if result['K'] >= result['Kc']:
-                st.success(f"Mặt cắt đập thỏa mãn điều kiện ổn định (K = {result['K']:.4f} ≥ Kc = {result['Kc']:.2f})")
+            if abs(result['K'] - result['Kc']) < 0.05:  # Sai số cho phép 5%
+                st.success(f"Mặt cắt đập thỏa mãn điều kiện ổn định (K = {result['K']:.4f} ≈ Kc = {result['Kc']:.2f})")
+            elif result['K'] > result['Kc']:
+                st.info(f"Mặt cắt đập thỏa mãn điều kiện ổn định (K = {result['K']:.4f} > Kc = {result['Kc']:.2f})")
             else:
                 st.error(f"Mặt cắt đập KHÔNG thỏa mãn điều kiện ổn định (K = {result['K']:.4f} < Kc = {result['Kc']:.2f})")
             
@@ -626,6 +406,9 @@ with tabs[0]:
                 st.success(f"Mặt cắt đập thỏa mãn điều kiện không kéo (σ = {result['sigma']:.4f} T/m² ≤ 0)")
             else:
                 st.warning(f"Mặt cắt đập có ứng suất kéo ở mép thượng lưu (σ = {result['sigma']:.4f} T/m² > 0)")
+            
+            # Hiển thị thông tin về số vòng lặp
+            st.info(f"Số vòng lặp thực tế: {result['iterations']} / {result.get('max_iterations', max_iterations)} (tối đa)")
             
             # Hiển thị thời gian tính toán
             st.info(f"Thời gian tính toán: {result['computation_time']:.2f} giây")
@@ -636,14 +419,23 @@ with tabs[0]:
             # Tab mặt cắt đập
             with result_tabs[0]:
                 # Tạo biểu đồ Plotly tương tác
-                fig = create_force_diagram(result)
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    fig = create_force_diagram(result)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Không thể tạo biểu đồ mặt cắt đập: {str(e)}")
             
             # Tab biểu đồ hàm mất mát
             with result_tabs[1]:
                 # Tạo biểu đồ Plotly tương tác
-                loss_fig = plot_loss_curve(result['loss_history'])
-                st.plotly_chart(loss_fig, use_container_width=True)
+                try:
+                    if 'loss_history' in result and len(result['loss_history']) > 0:
+                        loss_fig = plot_loss_curve(result['loss_history'])
+                        st.plotly_chart(loss_fig, use_container_width=True)
+                    else:
+                        st.warning("Không có dữ liệu lịch sử hàm mất mát để hiển thị")
+                except Exception as e:
+                    st.error(f"Không thể tạo biểu đồ hàm mất mát: {str(e)}")
             
             # Tab xuất báo cáo
             with result_tabs[2]:
@@ -665,90 +457,96 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("### Lịch sử tính toán")
     
-    # Lấy dữ liệu từ cơ sở dữ liệu
-    db = get_database()
-    history_df = db.get_all_results()
-    
-    if len(history_df) > 0:
-        # Hiển thị bảng lịch sử
-        st.dataframe(
-            history_df[['id', 'timestamp', 'H', 'gamma_bt', 'gamma_n', 'f', 'C', 'Kc', 'a1', 'n', 'm', 'xi', 'A', 'K', 'sigma']],
-            use_container_width=True
-        )
+    try:
+        # Lấy dữ liệu từ cơ sở dữ liệu
+        db = get_database()
+        history_df = db.get_all_results()
         
-        # Chọn kết quả để xem chi tiết
-        selected_id = st.selectbox("Chọn ID để xem chi tiết:", history_df['id'].tolist())
-        
-        if st.button("Xem chi tiết"):
-            # Lấy kết quả từ cơ sở dữ liệu
-            selected_result = db.get_result_by_id(selected_id)
+        if len(history_df) > 0:
+            # Hiển thị bảng lịch sử
+            st.dataframe(
+                history_df[['id', 'timestamp', 'H', 'gamma_bt', 'gamma_n', 'f', 'C', 'Kc', 'a1', 'n', 'm', 'xi', 'A', 'K', 'sigma']],
+                use_container_width=True
+            )
             
-            if selected_result:
-                # Hiển thị thông tin chi tiết
-                st.markdown("#### Thông tin chi tiết")
+            # Chọn kết quả để xem chi tiết
+            selected_id = st.selectbox("Chọn ID để xem chi tiết:", history_df['id'].tolist())
+            
+            if st.button("Xem chi tiết"):
+                # Lấy kết quả từ cơ sở dữ liệu
+                selected_result = db.get_result_by_id(selected_id)
                 
-                # Tạo DataFrame từ kết quả
-                detail_df = pd.DataFrame({
-                    'Thông số': [
-                        'Chiều cao đập (H)',
-                        'Trọng lượng riêng bê tông (γ_bt)',
-                        'Trọng lượng riêng nước (γ_n)',
-                        'Hệ số ma sát (f)',
-                        'Cường độ kháng cắt (C)',
-                        'Hệ số ổn định yêu cầu (Kc)',
-                        'Hệ số áp lực thấm (a1)',
-                        'Hệ số mái thượng lưu (n)',
-                        'Hệ số mái hạ lưu (m)',
-                        'Tham số ξ',
-                        'Diện tích mặt cắt (A)',
-                        'Hệ số ổn định (K)',
-                        'Ứng suất mép thượng lưu (σ)',
-                        'Số vòng lặp',
-                        'Thời gian tính toán',
-                        'Thời điểm tính toán'
-                    ],
-                    'Giá trị': [
-                        f"{selected_result['H']:.2f} m",
-                        f"{selected_result['gamma_bt']:.2f} T/m³",
-                        f"{selected_result['gamma_n']:.2f} T/m³",
-                        f"{selected_result['f']:.2f}",
-                        f"{selected_result['C']:.2f} T/m²",
-                        f"{selected_result['Kc']:.2f}",
-                        f"{selected_result['a1']:.2f}",
-                        f"{selected_result['n']:.4f}",
-                        f"{selected_result['m']:.4f}",
-                        f"{selected_result['xi']:.4f}",
-                        f"{selected_result['A']:.2f} m²",
-                        f"{selected_result['K']:.4f}",
-                        f"{selected_result['sigma']:.4f} T/m²",
-                        f"{selected_result['iterations']}",
-                        f"{selected_result['computation_time']:.2f} giây",
-                        f"{selected_result['timestamp']}"
-                    ]
-                })
-                
-                # Hiển thị DataFrame
-                st.dataframe(detail_df, use_container_width=True)
-                
-                # Tạo link tải xuống Excel
-                st.markdown(
-                    get_excel_download_link(detail_df, f"bao_cao_dam_id{selected_id}.xlsx"),
-                    unsafe_allow_html=True
-                )
-                
-                # Nút để tải kết quả vào form tính toán
-                if st.button("Tải thông số này vào form tính toán"):
-                    st.session_state.H = selected_result['H']
-                    st.session_state.gamma_bt = selected_result['gamma_bt']
-                    st.session_state.gamma_n = selected_result['gamma_n']
-                    st.session_state.f = selected_result['f']
-                    st.session_state.C = selected_result['C']
-                    st.session_state.Kc = selected_result['Kc']
-                    st.session_state.a1 = selected_result['a1']
-                    st.session_state.max_iterations = selected_result['iterations']
-                    st.success("Đã tải thông số vào form tính toán. Chuyển sang tab 'Tính toán' để tiếp tục.")
-    else:
-        st.info("Chưa có kết quả tính toán nào được lưu trong cơ sở dữ liệu.")
+                if selected_result:
+                    # Hiển thị thông tin chi tiết
+                    st.markdown("#### Thông tin chi tiết")
+                    
+                    # Tạo DataFrame từ kết quả
+                    detail_df = pd.DataFrame({
+                        'Thông số': [
+                            'Chiều cao đập (H)',
+                            'Trọng lượng riêng bê tông (γ_bt)',
+                            'Trọng lượng riêng nước (γ_n)',
+                            'Hệ số ma sát (f)',
+                            'Cường độ kháng cắt (C)',
+                            'Hệ số ổn định yêu cầu (Kc)',
+                            'Hệ số áp lực thấm (a1)',
+                            'Hệ số mái thượng lưu (n)',
+                            'Hệ số mái hạ lưu (m)',
+                            'Tham số ξ',
+                            'Diện tích mặt cắt (A)',
+                            'Hệ số ổn định (K)',
+                            'Ứng suất mép thượng lưu (σ)',
+                            'Số vòng lặp thực tế',
+                            'Số vòng lặp tối đa',
+                            'Thời gian tính toán',
+                            'Thời điểm tính toán'
+                        ],
+                        'Giá trị': [
+                            f"{selected_result['H']:.2f} m",
+                            f"{selected_result['gamma_bt']:.2f} T/m³",
+                            f"{selected_result['gamma_n']:.2f} T/m³",
+                            f"{selected_result['f']:.2f}",
+                            f"{selected_result['C']:.2f} T/m²",
+                            f"{selected_result['Kc']:.2f}",
+                            f"{selected_result['a1']:.2f}",
+                            f"{selected_result['n']:.4f}",
+                            f"{selected_result['m']:.4f}",
+                            f"{selected_result['xi']:.4f}",
+                            f"{selected_result['A']:.2f} m²",
+                            f"{selected_result['K']:.4f}",
+                            f"{selected_result['sigma']:.4f} T/m²",
+                            f"{selected_result['iterations']}",
+                            f"{selected_result.get('max_iterations', 5000)}",
+                            f"{selected_result.get('computation_time', 0):.2f} giây",
+                            f"{selected_result['timestamp']}"
+                        ]
+                    })
+                    
+                    # Hiển thị DataFrame
+                    st.dataframe(detail_df, use_container_width=True)
+                    
+                    # Tạo link tải xuống Excel
+                    st.markdown(
+                        get_excel_download_link(detail_df, f"bao_cao_dam_id{selected_id}.xlsx"),
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Nút để tải kết quả vào form tính toán
+                    if st.button("Tải thông số này vào form tính toán"):
+                        st.session_state.H = selected_result['H']
+                        st.session_state.gamma_bt = selected_result['gamma_bt']
+                        st.session_state.gamma_n = selected_result['gamma_n']
+                        st.session_state.f = selected_result['f']
+                        st.session_state.C = selected_result['C']
+                        st.session_state.Kc = selected_result['Kc']
+                        st.session_state.a1 = selected_result['a1']
+                        st.session_state.max_iterations = selected_result.get('max_iterations', 5000)
+                        st.success("Đã tải thông số vào form tính toán. Chuyển sang tab 'Tính toán' để tiếp tục.")
+        else:
+            st.info("Chưa có kết quả tính toán nào được lưu trong cơ sở dữ liệu.")
+    except Exception as e:
+        st.error(f"Lỗi khi truy cập cơ sở dữ liệu: {str(e)}")
+        st.info("Vui lòng thực hiện tính toán mới để tạo dữ liệu.")
 
 # Tab Lý thuyết
 with tabs[2]:
@@ -771,7 +569,7 @@ with tabs[2]:
     
     Mặt cắt đập phải thỏa mãn các điều kiện sau:
     
-    1. **Điều kiện ổn định trượt**: Hệ số ổn định K ≥ Kc
+    1. **Điều kiện ổn định trượt**: Hệ số ổn định K = Kc
     2. **Điều kiện không kéo**: Ứng suất mép thượng lưu σ ≤ 0
     3. **Tối thiểu hóa diện tích mặt cắt**: Giảm thiểu lượng bê tông sử dụng
     
@@ -797,76 +595,60 @@ with tabs[2]:
     
     Hàm mất mát bao gồm các thành phần:
     
-    1. Phạt nếu K < Kc (đảm bảo ổn định)
+    1. Phạt nếu K khác Kc (đảm bảo ổn định chính xác)
     2. Phạt nếu σ > 0 (đảm bảo không kéo)
     3. Tối thiểu hóa diện tích A
     
-    #### Tài liệu tham khảo
+    #### Cơ chế hội tụ sớm
     
-    1. Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019). Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal of Computational Physics, 378, 686-707.
-    2. Nguyễn Văn Mạo, Đỗ Văn Bình (2010). Tính toán thiết kế đập bê tông trọng lực. NXB Xây dựng, Hà Nội.
+    Ứng dụng sử dụng cơ chế hội tụ sớm để tối ưu hóa quá trình tính toán:
+    
+    1. **Ngưỡng hội tụ**: Dừng khi sự thay đổi của hàm mất mát nhỏ hơn ngưỡng
+    2. **Kiên nhẫn**: Dừng khi không có cải thiện sau một số vòng lặp nhất định
+    3. **Điều chỉnh learning rate**: Giảm learning rate khi hàm mất mát không giảm
+    
+    Cơ chế này giúp giảm thời gian tính toán và tránh overfitting, đồng thời vẫn đảm bảo tìm được giải pháp tối ưu.
     """)
 
 # Tab Giới thiệu
 with tabs[3]:
     st.markdown("""
-    ### Giới thiệu
+    ### Giới thiệu về ứng dụng
     
-    Ứng dụng **Tính toán tối ưu mặt cắt đập bê tông trọng lực** là một công cụ chuyên nghiệp giúp kỹ sư và nhà thiết kế tìm ra mặt cắt kinh tế nhất cho đập bê tông trọng lực (phần không tràn) đồng thời đảm bảo các yêu cầu về ổn định và an toàn.
+    Ứng dụng này sử dụng mô hình Physics-Informed Neural Networks (PINNs) để tính toán mặt cắt kinh tế đập bê tông trọng lực thỏa mãn các điều kiện ổn định và an toàn.
     
     #### Tính năng chính
     
-    - **Tính toán tối ưu sử dụng PINNs**: Áp dụng mô hình mạng nơ-ron học sâu kết hợp với các ràng buộc vật lý để tìm mặt cắt đập tối ưu
-    - **Giao diện người dùng**: Thiết kế tối giản, sạch sẽ theo phong cách Apple
-    - **Trực quan hóa**: Hiển thị sơ đồ lực tác dụng và biểu đồ hàm mất mát tương tác
-    - **Báo cáo**: Xuất báo cáo dạng Excel
-    - **Cơ sở dữ liệu**: Lưu trữ và quản lý kết quả tính toán
+    - **Tối ưu hóa mặt cắt**: Tìm bộ 3 thông số (n, m, ξ) tối ưu thỏa mãn các điều kiện
+    - **Trực quan hóa**: Hiển thị sơ đồ mặt cắt đập và biểu đồ hàm mất mát
+    - **Lưu trữ kết quả**: Lưu và truy xuất các kết quả tính toán
+    - **Xuất báo cáo**: Tạo báo cáo Excel với đầy đủ thông tin
+    
+    #### Ưu điểm của phương pháp PINNs
+    
+    - **Tự động tối ưu hóa**: Không cần thử nghiệm thủ công nhiều phương án
+    - **Kết hợp vật lý và học máy**: Đảm bảo kết quả thỏa mãn các định luật vật lý
+    - **Hội tụ nhanh**: Cơ chế hội tụ sớm giúp giảm thời gian tính toán
+    - **Chính xác cao**: Tìm được mặt cắt tối ưu thỏa mãn chính xác các điều kiện
     
     #### Hướng dẫn sử dụng
     
-    1. Nhập các thông số đầu vào trong tab "Tính toán"
-    2. Nhấn nút "Tính toán tối ưu" để thực hiện tính toán
-    3. Xem kết quả tính toán và các biểu đồ trực quan
-    4. Xuất báo cáo dạng Excel nếu cần
-    5. Xem lịch sử tính toán trong tab "Lịch sử tính toán"
+    1. Nhập các thông số đầu vào ở tab "Tính toán"
+    2. Nhấn nút "Tính toán tối ưu" để bắt đầu quá trình tối ưu hóa
+    3. Xem kết quả và biểu đồ trực quan
+    4. Tải xuống báo cáo Excel nếu cần
+    5. Xem lịch sử tính toán ở tab "Lịch sử tính toán"
     
-    #### Về tác giả
+    #### Lưu ý
     
-    Ứng dụng này được phát triển bởi nhóm nghiên cứu về ứng dụng trí tuệ nhân tạo trong kỹ thuật xây dựng công trình thủy lợi.
-    
-    #### Liên hệ
-    
-    Nếu có bất kỳ câu hỏi hoặc góp ý nào, vui lòng liên hệ qua email: example@example.com
+    - Quá trình tối ưu hóa có thể mất từ vài giây đến vài phút tùy thuộc vào thông số đầu vào
+    - Số vòng lặp tối đa có thể điều chỉnh để cân bằng giữa thời gian tính toán và độ chính xác
+    - Cơ chế hội tụ sớm sẽ tự động dừng quá trình khi đã tìm được giải pháp tối ưu
     """)
 
 # Footer
 st.markdown("""
 <div class="footer">
-    <p>© 2025 Công cụ tính toán tối ưu mặt cắt đập bê tông trọng lực | Phiên bản PINNs 1.0</p>
+    <p>Ứng dụng tính toán tối ưu mặt cắt đập bê tông trọng lực sử dụng PINNs</p>
 </div>
 """, unsafe_allow_html=True)
-
-# Biểu đồ hàm mất mát
-def plot_loss_curve(loss_history):
-    import plotly.graph_objects as go
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=list(range(len(loss_history))),
-        y=loss_history,
-        mode='lines',
-        line=dict(color='red', width=2),
-        name='Hàm mất mát'
-    ))
-
-    fig.update_layout(
-        title='Quá trình tối ưu hóa',
-        xaxis_title='Số vòng lặp',
-        yaxis_title='Giá trị hàm mất mát',
-        width=800,
-        height=400,
-        margin=dict(l=50, r=50, t=50, b=50),
-        plot_bgcolor='white'
-    )
-
-    return fig
